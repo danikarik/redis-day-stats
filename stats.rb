@@ -33,7 +33,7 @@ class RecognitionInfo
   end
 
   def to_s
-    "id: #{id}\ttime: #{time}\tamount: #{amount}\tverified: #{verified}\tapp_id: #{app_id}\ttype: #{document_type}"
+    "day: #{Time.at(time.to_i).strftime('%Y-%m-%d')}\ttime: #{time}\tamount: #{amount}\tverified: #{verified}\tapp_id: #{app_id}\ttype: #{document_type}"
   end
 end
 
@@ -42,7 +42,7 @@ class RecognitionDay
   attr_accessor :time, :amount, :success, :failed, :app_id, :document_type
 
   def to_s
-    "day: #{Time.at(time.to_i).strftime('%Y-%m-%d')}\ttime: #{time}\tamount: #{amount}\tsuccess: #{success}\tfailed: #{failed}"
+    "day: #{Time.at(time.to_i).strftime('%Y-%m-%d')}\ttime: #{time}\tamount: #{amount}\tsuccess: #{success}\tfailed: #{failed}\tapp_id: #{app_id}\ttype: #{document_type}"
   end
 end
 
@@ -60,25 +60,10 @@ def save_recognition(conn, owner_id, info)
   save_recognition_day(conn, owner_id, info)
 end
 
-def save_recognition_day(conn, owner_id, info)
-  day = truncate info.time
-  key = "user:#{owner_id}:recognitions:day:#{day}"
-
-  conn.hset(key, 'time', day)
-  conn.hincrby(key, 'amount', info.amount)
-  if info.verified
-    conn.hincrby(key, 'success', 1)
-  else
-    conn.hincrby(key, 'failed', 1)
-  end
-
-  conn.zadd("user:#{owner_id}:recognitions:days", day, day, nx: true)
-end
-
 def load_recognition(conn, id)
   data = conn.hgetall("recognition:#{id}")
   info = RecognitionInfo.new
-  info.id = data['id']
+  info.id = id
   info.time = data['time']
   info.amount = data['amount']
   info.user_id = data['user_id']
@@ -89,13 +74,32 @@ def load_recognition(conn, id)
   info
 end
 
+def save_recognition_day(conn, owner_id, info)
+  day = truncate info.time
+  id = "#{day}:#{info.app_id}:#{info.document_type}"
+  key = "user:#{owner_id}:recognitions:day:#{id}"
+
+  conn.hset(key, 'time', day)
+  conn.hincrby(key, 'amount', info.amount)
+  if info.verified
+    conn.hincrby(key, 'success', 1)
+  else
+    conn.hincrby(key, 'failed', 1)
+  end
+
+  conn.zadd("user:#{owner_id}:recognitions:days", day, id, nx: true)
+end
+
 def load_recognition_day(conn, owner_id, id)
   data = conn.hgetall("user:#{owner_id}:recognitions:day:#{id}")
   day = RecognitionDay.new
+  attrs = id.split(':')
+  day.app_id = attrs[1]
+  day.document_type = attrs[2]
   day.time = data['time']
   day.amount = data['amount']
-  day.success = data['success']
-  day.failed = data['failed']
+  day.success = data['success'] || 0
+  day.failed = data['failed'] || 0
   day
 end
 
@@ -130,7 +134,12 @@ test_cases = [
   RecognitionInfo.new(Time.utc(2020, 8, 17, 1, 0, 0), second_app_id, 'Passport', false),
   RecognitionInfo.new(Time.utc(2020, 8, 17, 1, 0, 0), second_app_id, 'IdCard', true),
   RecognitionInfo.new(Time.utc(2020, 8, 18, 1, 0, 0), second_app_id, 'DriverLicense', false),
-  RecognitionInfo.new(Time.utc(2020, 8, 18, 1, 0, 0), second_app_id, 'ProofOfAddress', true)
+  RecognitionInfo.new(Time.utc(2020, 8, 18, 1, 0, 0), second_app_id, 'ProofOfAddress', true),
+
+  RecognitionInfo.new(Time.utc(2020, 8, 17, 2, 0, 0), app_id, 'Passport', false),
+  RecognitionInfo.new(Time.utc(2020, 8, 18, 2, 0, 0), app_id, 'IdCard', true),
+  RecognitionInfo.new(Time.utc(2020, 8, 18, 2, 0, 0), second_app_id, 'DriverLicense', false),
+  RecognitionInfo.new(Time.utc(2020, 8, 18, 2, 0, 0), second_app_id, 'ProofOfAddress', true)
 ]
 
 test_cases.each do |info|
